@@ -2,11 +2,15 @@ extern crate libc;
 
 //#! ID Software Queue implementation.
 pub mod idqueue {
-    use libc::size_t;
+    use libc::{size_t, c_void};
     use std::intrinsics;
     use std::ptr;
     use std::mem;
-    use std::rc::Rc;
+
+    extern {
+        pub fn rs_idqueue_add(q: *mut rs_idqueue_t, el: *const c_void) -> c_void;
+        pub fn rs_idqueue_get(q: *mut rs_idqueue_t) -> *const c_void;
+    }
 
     //#define idQueue( type, next )idQueueTemplate<type, (int)&(((type*)NULL)->next)>
     /* Original code:
@@ -25,10 +29,13 @@ pub mod idqueue {
     */
     #[repr(C)]
     pub struct IdQueue<T> {
-        first: Rc<Option<*mut T>>,
-        last:  Rc<Option<*mut T>>,
+        first: *mut T,
+        last:  *mut T,
         offset: size_t
     }
+
+    #[repr(C)]
+    pub type rs_idqueue_t = IdQueue<c_void>;
 
     impl<T> IdQueue<T> {
         /* Original code:
@@ -37,10 +44,10 @@ pub mod idqueue {
          *   first = last = NULL;
          * }
         **/
-        pub extern "C" fn new(offset: size_t) -> IdQueue<T> {
+        pub fn new(offset: size_t) -> IdQueue<T> {
             IdQueue {
-                first: Rc::new(None),
-                last: Rc::new(None),
+                first: ptr::null_mut(),
+                last: ptr::null_mut(),
                 offset: offset
             }
         }
@@ -64,13 +71,20 @@ pub mod idqueue {
          * }
          */
         #[no_mangle]
-        pub extern "C" fn add(&mut self, element: *mut T) {
+        pub fn add(&mut self, element: *mut T) {
             *self.queue_next_ptr(element) = ptr::null_mut();
-            match *self.last {
-                Some(ref v) => { *self.queue_next_ptr(*v) = element },
-                None => { self.first = Rc::new(Some(element)) }
+
+            if self.last.is_null() {
+                self.first = element;
+            } else {
+                *self.queue_next_ptr(self.last) = element
             }
-            self.last = Rc::new(Some(element))
+
+            self.last = element;
+        }
+
+        pub fn is_empty(&self) -> bool {
+            self.last.is_null() && self.first.is_null()
         }
 
         /* Original code:
@@ -89,22 +103,34 @@ pub mod idqueue {
          * }
         */
         #[no_mangle]
-        pub extern fn get(&mut self) -> *mut T {
-            let element = self.first.clone();
-            match *element {
-                Some(ref v) => {
-                    self.first = Rc::new(Some(*self.queue_next_ptr(*v)));
-                    if self.last.is_some() {
-                       if (*self.last).unwrap() == *v {
-                           self.last = Rc::new(None)
-                       }
-                    }
-                    *self.queue_next_ptr(*v) = ptr::null_mut();
-                },
-                None => {}
+        pub fn get(&mut self) -> *mut T {
+            let element = self.first;
+            if !element.is_null() {
+              self.first = *self.queue_next_ptr(self.first);
+              if self.last == element {
+                  self.last = ptr::null_mut()
+              }
+              *self.queue_next_ptr(element) = ptr::null_mut();
             }
-            (*element).unwrap()
+            element
         }
+    }
+
+
+    #[test]
+    fn can_init() {
+        struct Point(u8, u8);
+        let q: IdQueue<Point> = IdQueue::new(mem::size_of::<Point>() as u64);
+        assert!(q.is_empty() == true);
+    }
+
+    #[test]
+    fn can_add_one_without_segfault() {
+        struct Point(u8, u8, *mut Point);
+        let mut q: IdQueue<Point> = IdQueue::new((mem::size_of::<u8>() * 2) as u64);
+        let ptr: *mut Point = &mut Point(10,20, ptr::null_mut());
+        q.add(ptr);
+        assert!(q.is_empty() == false);
     }
 
 }
