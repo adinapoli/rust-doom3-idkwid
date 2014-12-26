@@ -1,0 +1,5 @@
+[package]
+
+name = "rust-doom3-idkwid"
+version = "0.0.1"
+authors = ["Alfredo Di Napoli <alfredo.dinapoli@gmail.com>"]
