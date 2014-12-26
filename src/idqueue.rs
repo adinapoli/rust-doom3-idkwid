@@ -53,10 +53,8 @@ pub mod idqueue {
         }
 
         //#define QUEUE_NEXT_PTR( element )(*((type**)(((byte*)element)+nextOffset)))
-        fn queue_next_ptr(&self, element: *const T) -> Box<*mut T> {
-            box unsafe {
-                mem::transmute(intrinsics::offset(element, self.offset as int))
-            }
+        fn queue_next_ptr<'a>(&self, element: *const T) -> * mut T {
+            unsafe { intrinsics::offset(element, self.offset as int) as *mut T}
         }
 
         /* Original code
@@ -72,15 +70,25 @@ pub mod idqueue {
          */
         #[no_mangle]
         pub fn add(&mut self, element: *mut T) {
-            *self.queue_next_ptr(element) = ptr::null_mut();
+            let mut next_ptr_el = self.queue_next_ptr(element);
+            unsafe { ptr::write(&mut next_ptr_el, ptr::null_mut()) };
 
-            if self.last.is_null() {
-                self.first = element;
+            println!("el = {}",  element);
+            if self.last.is_not_null() {
+                let mut next_ptr_lst = self.queue_next_ptr(self.last);
+                println!("pre = {}",  next_ptr_lst);
+                unsafe { ptr::write(&mut(next_ptr_lst), element) };
+                println!("post = {}",  next_ptr_lst);
             } else {
-                *self.queue_next_ptr(self.last) = element
+                println!("self.first pre = {}",  self.first);
+                self.first = element;
+                println!("self.first post = {}",  self.first);
             }
 
+            println!("self.last pre = {}",  self.last);
+            println!("eleme = {}",  element);
             self.last = element;
+            println!("self.last post = {}",  self.last);
         }
 
         pub fn is_empty(&self) -> bool {
@@ -105,12 +113,13 @@ pub mod idqueue {
         #[no_mangle]
         pub fn get(&mut self) -> *mut T {
             let element = self.first;
-            if !element.is_null() {
-              self.first = *self.queue_next_ptr(self.first);
+            if element.is_not_null() {
+              self.first = self.queue_next_ptr(self.first);
               if self.last == element {
                   self.last = ptr::null_mut()
               }
-              *self.queue_next_ptr(element) = ptr::null_mut();
+                let mut next_ptr_e = self.queue_next_ptr(element);
+                unsafe { ptr::write(&mut next_ptr_e, ptr::null_mut()) };
             }
             element
         }
@@ -121,7 +130,7 @@ pub mod idqueue {
     fn can_init() {
         struct Point(u8, u8);
         let q: IdQueue<Point> = IdQueue::new(mem::size_of::<Point>() as u64);
-        assert!(q.is_empty() == true);
+        assert!(q.is_empty());
     }
 
     #[test]
@@ -131,6 +140,49 @@ pub mod idqueue {
         let ptr: *mut Point = &mut Point(10,20, ptr::null_mut());
         q.add(ptr);
         assert!(q.is_empty() == false);
+    }
+
+    #[test]
+    fn can_get_nullptr_if_empty() {
+        struct Point(u8, u8, *mut Point);
+        let mut q: IdQueue<Point> = IdQueue::new((mem::size_of::<u8>() * 2) as u64);
+        let res = q.get();
+        assert!(res.is_null());
+    }
+
+    #[test]
+    fn can_get_one() {
+        struct Point(u8, u8, *mut Point);
+        let mut q: IdQueue<Point> = IdQueue::new((mem::size_of::<u8>() * 2) as u64);
+        let ptr: *mut Point = &mut Point(10,20, ptr::null_mut());
+        q.add(ptr);
+        let res = q.get();
+        unsafe { assert!((*res).0 == 10) };
+        unsafe { assert!((*res).1 == 20) };
+    }
+
+    #[test]
+    fn can_push_multiple() {
+        struct Point(u8, u8, *mut Point);
+        let mut q: IdQueue<Point> = IdQueue::new((mem::size_of::<u8>() * 2) as u64);
+        let ptr: *mut Point = &mut Point(10,20, ptr::null_mut());
+        let ptr2: *mut Point = &mut Point(8,16, ptr::null_mut());
+        q.add(ptr);
+        q.add(ptr2);
+        unsafe { println!("ptr.2 = {}", (*ptr).2) };
+        unsafe { println!("ptr2.2 = {}", (*ptr2).2) };
+        assert!(q.first == ptr);
+        assert!(q.last == ptr2);
+        let res = q.get();
+        unsafe { assert!((*res).0 == 10) };
+        unsafe { assert!((*res).1 == 20) };
+        unsafe { println!("res.2 = {}", (*res).2) };
+        unsafe { assert!((*res).2 == ptr2) };
+        assert!(!q.is_empty());
+        let res2 = q.get();
+        unsafe { assert!((*res2).0 == 8) };
+        unsafe { assert!((*res2).1 == 16) };
+        assert!(q.is_empty());
     }
 
 }
