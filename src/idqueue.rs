@@ -2,16 +2,9 @@ extern crate libc;
 
 //#! ID Software Queue implementation.
 pub mod idqueue {
-    use libc::{size_t, c_void};
-    use std::intrinsics;
+    use libc::{size_t, c_int, c_void};
     use std::ptr;
-    use std::mem;
     use ptr_math;
-
-    extern {
-        pub fn rs_idqueue_add(q: *mut rs_idqueue_t, el: *const c_void) -> c_void;
-        pub fn rs_idqueue_get(q: *mut rs_idqueue_t) -> *const c_void;
-    }
 
     //#define idQueue( type, next )idQueueTemplate<type, (int)&(((type*)NULL)->next)>
     /* Original code:
@@ -69,7 +62,6 @@ pub mod idqueue {
          *     last = element;
          * }
          */
-        #[no_mangle]
         pub fn add(&mut self, element: *mut T) {
             unsafe {
                 ptr::write(self.queue_next_ptr(element), ptr::null_mut());
@@ -77,7 +69,6 @@ pub mod idqueue {
 
             if self.last.is_not_null() {
                 unsafe {
-                    println!("queue_next_ptr_last = {:p}", *self.queue_next_ptr(self.last));
                     ptr::write(self.queue_next_ptr(self.last), element);
                 }
             } else {
@@ -106,7 +97,6 @@ pub mod idqueue {
          *   return element;
          * }
         */
-        #[no_mangle]
         pub fn get(&mut self) -> *mut T {
             let element = self.first;
             if element.is_not_null() {
@@ -120,17 +110,35 @@ pub mod idqueue {
         }
     }
 
+    //C layer
+    #[no_mangle]
+    pub extern fn rs_idqueue_new(sz: size_t) -> rs_idqueue_t {
+        IdQueue::new(sz)
+    }
+    #[no_mangle]
+    pub extern "C" fn rs_idqueue_add(q: *mut rs_idqueue_t, el: *mut c_void) -> c_int {
+        unsafe {
+            (*q).add(el);
+            0
+        }
+    }
+    #[no_mangle]
+    pub extern fn rs_idqueue_get(q: *mut rs_idqueue_t) -> *const c_void {
+        unsafe { (*q).get() }
+    }
+
+
     #[test]
     fn can_init() {
         struct Point(u8, u8);
-        let q: IdQueue<Point> = IdQueue::new(mem::size_of::<Point>() as u64);
+        let q: IdQueue<Point> = IdQueue::new(8);
         assert!(q.is_empty());
     }
 
     #[test]
     fn can_add_one_without_segfault() {
         struct Point(u8, u8, *mut Point);
-        let mut q: IdQueue<Point> = IdQueue::new((mem::size_of::<u8>() * 2) as u64);
+        let mut q: IdQueue<Point> = IdQueue::new(8);
         let ptr: *mut Point = &mut Point(10,20, ptr::null_mut());
         q.add(ptr);
         assert!(q.is_empty() == false);
@@ -139,7 +147,7 @@ pub mod idqueue {
     #[test]
     fn can_get_nullptr_if_empty() {
         struct Point(u8, u8, *mut Point);
-        let mut q: IdQueue<Point> = IdQueue::new((mem::size_of::<u8>() * 2) as u64);
+        let mut q: IdQueue<Point> = IdQueue::new(8);
         let res = q.get();
         assert!(res.is_null());
     }
@@ -147,7 +155,7 @@ pub mod idqueue {
     #[test]
     fn can_get_one() {
         struct Point(u8, u8, *mut Point);
-        let mut q: IdQueue<Point> = IdQueue::new((mem::size_of::<u8>() * 2) as u64);
+        let mut q: IdQueue<Point> = IdQueue::new(8);
         let ptr: *mut Point = &mut Point(10,20, ptr::null_mut());
         q.add(ptr);
         let res = q.get();
@@ -156,7 +164,30 @@ pub mod idqueue {
     }
 
     #[test]
-    fn can_push_multiple() {
+    #[cfg(target_arch="x86")]
+    fn can_push_multiple_x86() {
+        struct Point(u8, u8, *mut Point);
+        let mut q: IdQueue<Point> = IdQueue::new(4);
+        let ptr: *mut Point = &mut Point(10,20, ptr::null_mut());
+        let ptr2: *mut Point = &mut Point(8,16, ptr::null_mut());
+        q.add(ptr);
+        q.add(ptr2);
+        assert!(q.first == ptr);
+        assert!(q.last == ptr2);
+        unsafe { assert!((*ptr).2 == ptr2) };
+        let res = q.get();
+        unsafe { assert!((*res).0 == 10) };
+        unsafe { assert!((*res).1 == 20) };
+        assert!(!q.is_empty());
+        let res2 = q.get();
+        unsafe { assert!((*res2).0 == 8) };
+        unsafe { assert!((*res2).1 == 16) };
+        assert!(q.is_empty());
+    }
+
+    #[test]
+    #[cfg(target_arch="x86_64")]
+    fn can_push_multiple_x86_64() {
         struct Point(u8, u8, *mut Point);
         let mut q: IdQueue<Point> = IdQueue::new(8);
         let ptr: *mut Point = &mut Point(10,20, ptr::null_mut());
